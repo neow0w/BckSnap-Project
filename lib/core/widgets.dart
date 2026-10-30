@@ -46,12 +46,17 @@ class LabeledField extends StatelessWidget {
   final TextEditingController? controller;
   final String? hint;
   final bool obscureText;
+  final bool readOnly;
   final TextInputType? keyboardType;
   final TextInputAction? textInputAction;
+  final TextCapitalization textCapitalization;
   final String? Function(String?)? validator;
   final Widget? suffixIcon;
+  final String? helperText;
+  final String? errorText;
   final List<TextInputFormatter>? inputFormatters;
   final Iterable<String>? autofillHints;
+  final VoidCallback? onTap;
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
 
@@ -61,12 +66,17 @@ class LabeledField extends StatelessWidget {
     this.controller,
     this.hint,
     this.obscureText = false,
+    this.readOnly = false,
     this.keyboardType,
     this.textInputAction,
+    this.textCapitalization = TextCapitalization.none,
     this.validator,
     this.suffixIcon,
+    this.helperText,
+    this.errorText,
     this.inputFormatters,
     this.autofillHints,
+    this.onTap,
     this.onChanged,
     this.onSubmitted,
   });
@@ -87,14 +97,23 @@ class LabeledField extends StatelessWidget {
         TextFormField(
           controller: controller,
           obscureText: obscureText,
+          readOnly: readOnly,
           keyboardType: keyboardType,
           textInputAction: textInputAction,
+          textCapitalization: textCapitalization,
           validator: validator,
           inputFormatters: inputFormatters,
           autofillHints: autofillHints,
+          onTap: onTap,
           onChanged: onChanged,
           onFieldSubmitted: onSubmitted,
-          decoration: InputDecoration(hintText: hint, suffixIcon: suffixIcon),
+          decoration: InputDecoration(
+            hintText: hint,
+            suffixIcon: suffixIcon,
+            helperText: helperText,
+            helperMaxLines: 2,
+            errorText: errorText,
+          ),
         ),
       ],
     );

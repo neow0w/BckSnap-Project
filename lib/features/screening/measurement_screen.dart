@@ -12,6 +12,26 @@ import 'back_levels.dart';
 import 'posture_analysis.dart';
 import 'screening_result.dart';
 
+/// Settings for the automatic zero and capture. Tune the numbers here.
+class AutoRules {
+  // Zero: the phone must lie flat (within this many degrees)...
+  static const double flatTolerance = 8.0;
+  // ...and stay this still (degrees of movement in the last second)...
+  static const double zeroRange = 0.6;
+  // ...for this long.
+  static const int zeroHoldMs = 1500;
+
+  // Measure: the phone must first be moved (picked up and placed)...
+  static const double moveRange = 2.0;
+  // ...then stay this still (same limit as a good reading)...
+  static const double measureRange = TiltRules.maxRange;
+  // ...for this long, before the 1-second reading is taken.
+  static const int measureHoldMs = 1200;
+
+  // After a good reading, wait this long before the next level.
+  static const int advanceMs = 2500;
+}
+
 enum _Phase { zero, measure, review }
 
 class MeasurementScreen extends StatefulWidget {
@@ -23,14 +43,19 @@ class MeasurementScreen extends StatefulWidget {
 
 class _MeasurementScreenState extends State<MeasurementScreen> {
   final TiltSensor _sensor = TiltSensor();
+  final ValueNotifier<double> _progress = ValueNotifier<double>(0);
   Timer? _sensorTimer;
+  Timer? _tick;
+  Timer? _advanceTimer;
 
   _Phase _phase = _Phase.zero;
   int _levelIndex = 0;
   bool _fromReview = false; // re-measuring one level from the review screen
   final Map<String, LevelReading> _readings = {};
-  LevelReading? _pending; // captured, waiting for "Keep" or "Re-measure"
+  LevelReading? _pending; // taken, moving on to the next level soon
   bool _capturing = false;
+  bool _armed = false; // the phone was moved since this level started
+  int? _steadySince; // when the phone became steady (ms)
   String? _message;
   bool _saving = false;
 
@@ -50,15 +75,67 @@ class _MeasurementScreenState extends State<MeasurementScreen> {
         setState(() => _sensor.testMode = true);
       }
     });
+    _tick = Timer.periodic(const Duration(milliseconds: 120), (_) => _onTick());
   }
 
   @override
   void dispose() {
     _sensorTimer?.cancel();
+    _tick?.cancel();
+    _advanceTimer?.cancel();
+    _progress.dispose();
     _sensor.dispose();
     // Give the other screens their normal rotation back.
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     super.dispose();
+  }
+
+  // ---- automatic zero and capture --------------------------------------------
+
+  void _resetHold() {
+    _steadySince = null;
+    if (_progress.value != 0) _progress.value = 0;
+  }
+
+  void _onTick() {
+    if (!mounted || _capturing || _saving || _pending != null) return;
+    if (_phase == _Phase.review) return;
+
+    final range = _sensor.recentRange();
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    if (_phase == _Phase.zero) {
+      final flat = _sensor.angle.value.abs() <= AutoRules.flatTolerance;
+      final still = range != null && range <= AutoRules.zeroRange;
+      if (!(flat && still)) {
+        _resetHold();
+        return;
+      }
+      _steadySince ??= now;
+      final held = now - _steadySince!;
+      _progress.value = (held / AutoRules.zeroHoldMs).clamp(0.0, 1.0);
+      if (held >= AutoRules.zeroHoldMs) _setZeroAndStart();
+      return;
+    }
+
+    // Measuring a level.
+    if (range == null) {
+      _resetHold();
+      return;
+    }
+    if (!_armed && (_sensor.testMode || range > AutoRules.moveRange)) {
+      setState(() => _armed = true);
+    }
+    if (!_armed || range > AutoRules.measureRange) {
+      _resetHold();
+      return;
+    }
+    _steadySince ??= now;
+    final held = now - _steadySince!;
+    _progress.value = (held / AutoRules.measureHoldMs).clamp(0.0, 1.0);
+    if (held >= AutoRules.measureHoldMs) {
+      _capture(BackLevels.all[_levelIndex]);
+    }
   }
 
   // ---- logic ----------------------------------------------------------------
@@ -73,16 +150,20 @@ class _MeasurementScreenState extends State<MeasurementScreen> {
 
   void _setZeroAndStart() {
     _sensor.setZero();
+    _resetHold();
     setState(() {
       _phase = _Phase.measure;
       _levelIndex = 0;
       _fromReview = false;
       _pending = null;
+      _armed = false;
       _message = null;
     });
   }
 
   Future<void> _capture(BackLevel level) async {
+    if (_capturing) return;
+    _resetHold();
     setState(() {
       _capturing = true;
       _message = null;
@@ -98,18 +179,32 @@ class _MeasurementScreenState extends State<MeasurementScreen> {
       } else if (r.range > TiltRules.maxRange) {
         _message =
             'The phone moved during the reading '
-            '(${r.range.toStringAsFixed(1)}°). Hold it steady and try again.';
+            '(${r.range.toStringAsFixed(1)}°). Hold it steady and it will '
+            'try again.';
       } else {
         _pending = LevelReading(level, r.angle, r.range);
       }
     });
+    if (_pending != null) {
+      _advanceTimer?.cancel();
+      _advanceTimer = Timer(
+        const Duration(milliseconds: AutoRules.advanceMs),
+        () {
+          if (mounted && _pending != null) _keep();
+        },
+      );
+    }
   }
 
   void _keep() {
-    final p = _pending!;
+    _advanceTimer?.cancel();
+    final p = _pending;
+    if (p == null) return;
     _readings[p.level.id] = p;
     setState(() {
       _pending = null;
+      _message = null;
+      _armed = false;
       if (_fromReview || _levelIndex >= BackLevels.all.length - 1) {
         _fromReview = false;
         _phase = _Phase.review;
@@ -117,31 +212,49 @@ class _MeasurementScreenState extends State<MeasurementScreen> {
         _levelIndex++;
       }
     });
+    _resetHold();
   }
 
-  void _remeasure() => setState(() {
-    _pending = null;
-    _message = null;
-  });
+  void _remeasure() {
+    _advanceTimer?.cancel();
+    _resetHold();
+    setState(() {
+      _pending = null;
+      _message = null;
+      _armed = false;
+    });
+  }
 
-  void _remeasureLevel(int index) => setState(() {
-    _levelIndex = index;
-    _fromReview = true;
-    _pending = null;
-    _message = null;
-    _phase = _Phase.measure;
-  });
+  void _remeasureLevel(int index) {
+    _advanceTimer?.cancel();
+    _resetHold();
+    setState(() {
+      _levelIndex = index;
+      _fromReview = true;
+      _pending = null;
+      _armed = false;
+      _message = null;
+      _phase = _Phase.measure;
+    });
+  }
 
-  void _measureAgain() => setState(() {
-    _readings.clear();
-    _levelIndex = 0;
-    _fromReview = false;
-    _pending = null;
-    _message = null;
-    _phase = _Phase.measure;
-  });
+  void _measureAgain() {
+    _advanceTimer?.cancel();
+    _resetHold();
+    setState(() {
+      _readings.clear();
+      _levelIndex = 0;
+      _fromReview = false;
+      _pending = null;
+      _armed = false;
+      _message = null;
+      _phase = _Phase.measure;
+    });
+  }
 
   void _back() {
+    _advanceTimer?.cancel();
+    _resetHold();
     switch (_phase) {
       case _Phase.zero:
         context.go('/screening/photo');
@@ -149,6 +262,7 @@ class _MeasurementScreenState extends State<MeasurementScreen> {
         setState(() {
           _pending = null;
           _message = null;
+          _armed = false;
           if (_fromReview) {
             _fromReview = false;
             _phase = _Phase.review;
@@ -156,18 +270,19 @@ class _MeasurementScreenState extends State<MeasurementScreen> {
             _levelIndex--;
           } else {
             _phase = _Phase.zero;
+            _sensor.clearZero();
           }
         });
       case _Phase.review:
         setState(() {
           _levelIndex = BackLevels.all.length - 1;
           _fromReview = false;
+          _armed = false;
           _phase = _Phase.measure;
         });
     }
   }
 
-  // Save the highest ATR, then show the result.
   // Save the highest ATR, then show the result.
   Future<void> _save() async {
     final highest = _highest;
@@ -215,6 +330,7 @@ class _MeasurementScreenState extends State<MeasurementScreen> {
     }
     context.go('/screening/result', extra: result);
   }
+
   // ---- UI -------------------------------------------------------------------
 
   @override
@@ -331,46 +447,64 @@ class _MeasurementScreenState extends State<MeasurementScreen> {
         Expanded(
           child: ListView(padding: const EdgeInsets.all(12), children: body),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: actions,
+        if (actions.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: actions,
+            ),
           ),
-        ),
       ],
     );
   }
 
   Widget _buildZero() {
     return _rightPanel(
-      body: const [
+      body: [
         Card(
           child: Padding(
-            padding: EdgeInsets.all(16),
+            padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
+                const Text(
                   'Zero the phone',
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
-                SizedBox(height: 8),
-                Text(
+                const SizedBox(height: 8),
+                const Text(
                   '1. Put the phone flat on a level table, screen facing up, '
                   'with the long edge pointing left to right.',
                 ),
-                SizedBox(height: 6),
-                Text(
+                const SizedBox(height: 6),
+                const Text(
                   '2. Check the axis: lift one of the two narrow ends a '
                   'little, like a see-saw. The number should change. '
                   'Lifting a long edge should not.',
                 ),
-                SizedBox(height: 6),
-                Text(
-                  '3. Put it back flat and wait for "Steady", then tap '
-                  '"Set zero and start".',
+                const SizedBox(height: 6),
+                const Text(
+                  '3. Put it back flat and keep it still. The zero is set '
+                  'automatically after about 1.5 seconds.',
+                ),
+                const SizedBox(height: 12),
+                ValueListenableBuilder<double>(
+                  valueListenable: _progress,
+                  builder: (context, p, _) => Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        p > 0
+                            ? 'Hold still...'
+                            : 'Waiting for the phone to lie flat and still',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      const SizedBox(height: 4),
+                      LinearProgressIndicator(value: p),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -378,19 +512,25 @@ class _MeasurementScreenState extends State<MeasurementScreen> {
         ),
       ],
       actions: [
-        FilledButton.icon(
+        TextButton(
           onPressed: _setZeroAndStart,
-          icon: const Icon(Icons.exposure_zero),
-          label: const Text('Set zero and start'),
+          child: const Text('Set zero now'),
         ),
       ],
     );
+  }
+
+  String _statusText() {
+    if (_capturing) return 'Taking the reading... hold still.';
+    if (!_armed) return "Place the phone on the patient's back at this level.";
+    return 'Hold the phone still. The reading is taken automatically.';
   }
 
   Widget _buildMeasure() {
     final level = BackLevels.all[_levelIndex];
     final pending = _pending;
     final total = BackLevels.all.length;
+    final isLast = _fromReview || _levelIndex >= total - 1;
 
     return _rightPanel(
       body: [
@@ -415,13 +555,30 @@ class _MeasurementScreenState extends State<MeasurementScreen> {
                 const Text(
                   "The patient bends forward (Adam's forward bend), arms "
                   'hanging. Lay the phone flat across the back, screen up, '
-                  'long edge across the spine. Hold it steady, then tap '
-                  '"Capture reading".',
+                  'long edge across the spine, and hold it steady.',
                 ),
               ],
             ),
           ),
         ),
+        if (pending == null)
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(_statusText()),
+                  const SizedBox(height: 8),
+                  ValueListenableBuilder<double>(
+                    valueListenable: _progress,
+                    builder: (context, p, _) =>
+                        LinearProgressIndicator(value: _capturing ? null : p),
+                  ),
+                ],
+              ),
+            ),
+          ),
         if (_message != null)
           Card(
             color: Colors.orange.withValues(alpha: 0.15),
@@ -435,44 +592,44 @@ class _MeasurementScreenState extends State<MeasurementScreen> {
             color: Colors.green.withValues(alpha: 0.12),
             child: Padding(
               padding: const EdgeInsets.all(16),
-              child: Text(
-                'Reading: ${pending.atr.toStringAsFixed(1)}°',
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                ),
+              child: Column(
+                children: [
+                  Text(
+                    'Reading: ${pending.atr.toStringAsFixed(1)}°',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    isLast
+                        ? 'Saved. Going to the review...'
+                        : 'Saved. Moving to the next level...',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ],
               ),
             ),
           ),
       ],
       actions: pending == null
           ? [
-              FilledButton.icon(
+              TextButton(
                 onPressed: _capturing ? null : () => _capture(level),
-                icon: _capturing
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.check_circle),
-                label: Text(_capturing ? 'Hold still...' : 'Capture reading'),
+                child: const Text('Capture now'),
               ),
             ]
           : [
               FilledButton(
                 onPressed: _keep,
-                child: Text(
-                  _fromReview || _levelIndex >= total - 1
-                      ? 'Keep this reading'
-                      : 'Keep and go to the next level',
-                ),
+                child: Text(isLast ? 'Review readings now' : 'Next level now'),
               ),
               const SizedBox(height: 8),
               OutlinedButton(
                 onPressed: _remeasure,
-                child: const Text('Re-measure'),
+                child: const Text('Re-measure this level'),
               ),
             ],
     );

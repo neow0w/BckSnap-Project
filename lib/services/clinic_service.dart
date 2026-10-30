@@ -1,4 +1,12 @@
+import 'dart:convert';
+import 'dart:math' as math;
+
+import 'package:cloud_firestore/cloud_firestore.dart' hide GeoPoint;
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:http/http.dart' as http;
+
 import 'api_client.dart';
+import 'auth_service.dart';
 
 class GeoPoint {
   const GeoPoint({
@@ -24,8 +32,8 @@ class ClinicDoctor {
     this.isDemo = false,
   });
 
-  final int id;
-  final int userId;
+  final String id;
+  final String userId;
   final String? name;
   final List<String> specializations;
   final String? professionalInfo;
@@ -33,18 +41,19 @@ class ClinicDoctor {
   final bool supportsPhysical;
   final bool isDemo;
 
-  factory ClinicDoctor.fromJson(Map<String, dynamic> json) => ClinicDoctor(
-    id: json['id'] as int,
-    userId: json['user_id'] as int,
-    name: json['name'] as String?,
-    specializations: (json['specializations'] as List? ?? const [])
-        .map((value) => value.toString())
-        .toList(),
-    professionalInfo: json['professional_info'] as String?,
-    supportsOnline: json['supports_online'] as bool? ?? false,
-    supportsPhysical: json['supports_physical'] as bool? ?? false,
-    isDemo: json['is_demo'] as bool? ?? false,
-  );
+  factory ClinicDoctor.fromMap(String id, Map<String, dynamic> m) =>
+      ClinicDoctor(
+        id: id,
+        userId: (m['userId'] as String?) ?? id,
+        name: m['name'] as String?,
+        specializations: [
+          for (final s in (m['specializations'] as List? ?? const []))
+            s.toString(),
+        ],
+        professionalInfo: m['professionalInfo'] as String?,
+        supportsOnline: m['supportsOnline'] as bool? ?? true,
+        supportsPhysical: m['supportsPhysical'] as bool? ?? true,
+      );
 }
 
 class ClinicDemoAppointmentType {
@@ -57,13 +66,6 @@ class ClinicDemoAppointmentType {
   final String mode;
   final String name;
   final bool simulationOnly;
-
-  factory ClinicDemoAppointmentType.fromJson(Map<String, dynamic> json) =>
-      ClinicDemoAppointmentType(
-        mode: json['mode'] as String,
-        name: json['name'] as String,
-        simulationOnly: json['simulation_only'] as bool? ?? true,
-      );
 }
 
 class ClinicInfo {
@@ -87,7 +89,7 @@ class ClinicInfo {
     required this.distanceKm,
   });
 
-  final int id;
+  final String id;
   final String name;
   final String? description;
   final String address;
@@ -115,41 +117,31 @@ class ClinicInfo {
       longitude! >= -180 &&
       longitude! <= 180;
 
-  factory ClinicInfo.fromJson(Map<String, dynamic> json) => ClinicInfo(
-    id: json['id'] as int,
-    name: json['name'] as String,
-    description: json['description'] as String?,
-    address: json['address'] as String,
-    latitude: (json['latitude'] as num?)?.toDouble(),
-    longitude: (json['longitude'] as num?)?.toDouble(),
-    phone: json['phone'] as String?,
-    email: json['email'] as String?,
-    timezone: json['timezone'] as String? ?? 'UTC',
+  factory ClinicInfo.fromMap(
+    String id,
+    Map<String, dynamic> m, {
+    List<ClinicDoctor> doctors = const [],
+    double? distanceKm,
+  }) => ClinicInfo(
+    id: id,
+    name: (m['name'] as String?) ?? 'Clinic',
+    description: m['description'] as String?,
+    address: (m['address'] as String?) ?? '',
+    latitude: (m['latitude'] as num?)?.toDouble(),
+    longitude: (m['longitude'] as num?)?.toDouble(),
+    phone: m['phone'] as String?,
+    email: m['email'] as String?,
+    timezone: (m['timezone'] as String?) ?? 'Asia/Manila',
     operatingHours: Map<String, dynamic>.from(
-      json['operating_hours'] as Map? ?? const {},
+      m['operatingHours'] as Map? ?? const {},
     ),
-    supportsOnline: json['supports_online'] as bool? ?? false,
-    supportsPhysical: json['supports_physical'] as bool? ?? false,
-    demoOperatingHours: Map<String, dynamic>.from(
-      json['demo_operating_hours'] as Map? ?? const {},
-    ),
-    demoAppointmentTypes: (json['demo_appointment_types'] as List? ?? const [])
-        .whereType<Map>()
-        .map(
-          (value) => ClinicDemoAppointmentType.fromJson(
-            Map<String, dynamic>.from(value),
-          ),
-        )
-        .toList(),
-    services: (json['services'] as List? ?? const [])
-        .map((value) => value is Map ? value['name']?.toString() ?? '' : '')
-        .where((value) => value.isNotEmpty)
-        .toList(),
-    doctors: (json['doctors'] as List? ?? const [])
-        .whereType<Map>()
-        .map((value) => ClinicDoctor.fromJson(Map<String, dynamic>.from(value)))
-        .toList(),
-    distanceKm: (json['distance_km'] as num?)?.toDouble(),
+    supportsOnline: m['supportsOnline'] as bool? ?? false,
+    supportsPhysical: m['supportsPhysical'] as bool? ?? false,
+    services: [
+      for (final s in (m['services'] as List? ?? const [])) s.toString(),
+    ],
+    doctors: doctors,
+    distanceKm: distanceKm,
   );
 }
 
@@ -163,13 +155,6 @@ class AppointmentSlot {
   final DateTime startsAt;
   final DateTime endsAt;
   final String mode;
-
-  factory AppointmentSlot.fromJson(Map<String, dynamic> json) =>
-      AppointmentSlot(
-        startsAt: DateTime.parse(json['starts_at'] as String).toLocal(),
-        endsAt: DateTime.parse(json['ends_at'] as String).toLocal(),
-        mode: json['mode'] as String,
-      );
 }
 
 class ClinicAppointment {
@@ -188,20 +173,22 @@ class ClinicAppointment {
     required this.doctorName,
     required this.reference,
     required this.cancellationReason,
+    this.patientName,
     this.isDemo = false,
   });
 
-  final int id;
-  final int userId;
+  final String id;
+  final String userId;
+  final String? patientName;
   final String status;
   final String? mode;
   final DateTime? scheduledAt;
   final DateTime createdAt;
   final DateTime updatedAt;
-  final int? clinicId;
+  final String? clinicId;
   final String? clinicName;
   final String? clinicAddress;
-  final int? doctorId;
+  final String? doctorId;
   final String? doctorName;
   final String? reference;
   final String? cancellationReason;
@@ -225,42 +212,124 @@ class ClinicNotification {
     required this.isRead,
   });
 
-  final int id;
-  final int appointmentId;
+  final String id;
+  final String appointmentId;
   final String eventType;
   final String title;
   final String message;
   final DateTime createdAt;
   final bool isRead;
-
-  factory ClinicNotification.fromJson(Map<String, dynamic> json) =>
-      ClinicNotification(
-        id: json['id'] as int,
-        appointmentId: json['appointment_id'] as int,
-        eventType: json['event_type'] as String,
-        title: json['title'] as String,
-        message: json['message'] as String,
-        createdAt: DateTime.parse(json['created_at'] as String),
-        isRead: json['read_at'] != null,
-      );
 }
 
+DateTime? _dt(dynamic v) => v is Timestamp ? v.toDate() : null;
+
 class ClinicService {
-  ClinicService({ApiClient? api}) : _api = api ?? ApiClient.instance;
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final AuthService _auth = AuthService();
 
-  final ApiClient _api;
+  static const _days = [
+    'monday',
+    'tuesday',
+    'wednesday',
+    'thursday',
+    'friday',
+    'saturday',
+    'sunday',
+  ];
 
-  Future<void> checkHealth() async {
-    final result = await _api.get('/health');
-    if (result is! Map ||
-        result['status'] != 'ok' ||
-        result['database'] != 'connected') {
-      throw ApiException(
-        503,
-        'The server is reachable, but its database health check did not pass. Please retry or contact the server administrator.',
-      );
+  // ---- helpers ----------------------------------------------------------
+
+  dynamic get _me {
+    final u = _auth.currentUser;
+    if (u == null) throw ApiException(401, 'Please log in again.');
+    return u;
+  }
+
+  Future<T> _guard<T>(Future<T> Function() run) async {
+    try {
+      return await run();
+    } on FirebaseException catch (e) {
+      throw apiErrorFrom(e);
     }
   }
+
+  static double _km(double lat1, double lon1, double lat2, double lon2) {
+    const r = 6371.0;
+    double rad(double d) => d * math.pi / 180;
+    final dLat = rad(lat2 - lat1);
+    final dLon = rad(lon2 - lon1);
+    final a =
+        math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(rad(lat1)) *
+            math.cos(rad(lat2)) *
+            math.sin(dLon / 2) *
+            math.sin(dLon / 2);
+    return 2 * r * math.asin(math.sqrt(a));
+  }
+
+  static String _reference() {
+    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    final r = math.Random.secure();
+    return 'BCK-${List.generate(6, (_) => chars[r.nextInt(chars.length)]).join()}';
+  }
+
+  static DateTime _at(DateTime date, String hhmm) {
+    final p = hhmm.split(':');
+    return DateTime(
+      date.year,
+      date.month,
+      date.day,
+      int.tryParse(p[0]) ?? 9,
+      p.length > 1 ? int.tryParse(p[1]) ?? 0 : 0,
+    );
+  }
+
+  ClinicAppointment _appt(String id, Map<String, dynamic> m) {
+    final created = _dt(m['createdAt']) ?? DateTime.now();
+    return ClinicAppointment(
+      id: id,
+      userId: (m['userId'] as String?) ?? '',
+      patientName: m['patientName'] as String?,
+      status: (m['status'] as String?) ?? 'pending',
+      mode: m['mode'] as String?,
+      scheduledAt: _dt(m['scheduledAt'])?.toUtc(),
+      createdAt: created,
+      updatedAt: _dt(m['updatedAt']) ?? created,
+      clinicId: m['clinicId'] as String?,
+      clinicName: m['clinicName'] as String?,
+      clinicAddress: m['clinicAddress'] as String?,
+      doctorId: m['doctorId'] as String?,
+      doctorName: m['doctorName'] as String?,
+      reference: m['reference'] as String?,
+      cancellationReason: m['cancellationReason'] as String?,
+    );
+  }
+
+  bool _inState(ClinicAppointment a, String? state) {
+    final now = DateTime.now().toUtc();
+    final at = a.scheduledAt;
+    switch (state) {
+      case 'pending':
+        return a.status == 'pending';
+      case 'upcoming':
+        return a.status == 'approved' && at != null && at.isAfter(now);
+      case 'past':
+        return at != null &&
+            at.isBefore(now) &&
+            (a.status == 'approved' || a.status == 'completed');
+      case 'cancelled':
+        return a.status == 'cancelled' ||
+            a.status == 'rejected' ||
+            a.status == 'declined';
+      default:
+        return true;
+    }
+  }
+
+  // ---- clinics ----------------------------------------------------------
+
+  /// Kept so the discovery screen needs no change.
+  Future<void> checkHealth() async {}
 
   Future<List<ClinicInfo>> search({
     String? query,
@@ -268,214 +337,445 @@ class ClinicService {
     double radiusKm = 50,
     String? service,
     String? mode,
-  }) async {
-    final parameters = <String, String>{};
-    if (query != null && query.trim().isNotEmpty) {
-      parameters['q'] = query.trim();
-    }
-    if (location != null) {
-      parameters['latitude'] = location.latitude.toString();
-      parameters['longitude'] = location.longitude.toString();
-      parameters['radius_km'] = radiusKm.toString();
-    }
-    if (service != null && service.trim().isNotEmpty) {
-      parameters['service'] = service.trim();
-    }
-    if (mode != null) parameters['mode'] = mode;
-    final path = Uri(
-      path: '/clinics',
-      queryParameters: parameters.isEmpty ? null : parameters,
-    );
-    final result = await _api.get(path.toString());
-    return (result as List)
-        .whereType<Map>()
-        .map((item) => ClinicInfo.fromJson(Map<String, dynamic>.from(item)))
-        .toList();
-  }
+  }) => _guard(() async {
+    final snap = await _db.collection('clinics').get();
+    final q = (query ?? '').trim().toLowerCase();
+    final s = (service ?? '').trim().toLowerCase();
+    final out = <ClinicInfo>[];
+    for (final d in snap.docs) {
+      final m = d.data();
+      if (q.isNotEmpty &&
+          !((m['name'] as String?) ?? '').toLowerCase().contains(q)) {
+        continue;
+      }
+      if (s.isNotEmpty &&
+          !((m['services'] as List? ?? const []).any(
+            (e) => e.toString().toLowerCase().contains(s),
+          ))) {
+        continue;
+      }
+      if (mode == 'physical' && m['supportsPhysical'] != true) continue;
+      if (mode == 'online' && m['supportsOnline'] != true) continue;
 
+      double? dist;
+      if (location != null) {
+        final lat = (m['latitude'] as num?)?.toDouble();
+        final lon = (m['longitude'] as num?)?.toDouble();
+        if (lat == null || lon == null) continue;
+        dist = _km(location.latitude, location.longitude, lat, lon);
+        if (dist > radiusKm) continue;
+      }
+      out.add(ClinicInfo.fromMap(d.id, m, distanceKm: dist));
+    }
+    out.sort(
+      (a, b) => location != null
+          ? (a.distanceKm ?? 0).compareTo(b.distanceKm ?? 0)
+          : a.name.compareTo(b.name),
+    );
+    return out;
+  });
+
+  /// Place search through OpenStreetMap Nominatim (free, no key).
   Future<List<GeoPoint>> geocode(String query) async {
-    final path = Uri(
-      path: '/clinics/geocode',
-      queryParameters: {'q': query.trim()},
-    );
-    final result = await _api.get(path.toString());
-    return (result as List)
-        .whereType<Map>()
-        .map(
-          (item) => GeoPoint(
-            label: item['label'] as String,
-            latitude: (item['latitude'] as num).toDouble(),
-            longitude: (item['longitude'] as num).toDouble(),
+    try {
+      final uri = Uri.https('nominatim.openstreetmap.org', '/search', {
+        'q': query.trim(),
+        'format': 'jsonv2',
+        'limit': '5',
+      });
+      final res = await http
+          .get(
+            uri,
+            headers: {
+              'Accept': 'application/json',
+              if (!kIsWeb) 'User-Agent': 'flutter_bcksnap/1.0',
+            },
+          )
+          .timeout(const Duration(seconds: 15));
+      if (res.statusCode != 200) {
+        throw ApiException(
+          res.statusCode,
+          'Location search failed. Please try again.',
+        );
+      }
+      final data = jsonDecode(utf8.decode(res.bodyBytes)) as List;
+      return [
+        for (final item in data.whereType<Map>())
+          GeoPoint(
+            label: item['display_name'] as String,
+            latitude: double.parse(item['lat'] as String),
+            longitude: double.parse(item['lon'] as String),
           ),
-        )
-        .toList();
+      ];
+    } on ApiException {
+      rethrow;
+    } catch (_) {
+      throw ApiException(
+        0,
+        'Cannot reach the location service. Check your connection.',
+      );
+    }
   }
 
-  Future<ClinicInfo> clinic(int id) async {
-    final result = await _api.get('/clinics/$id');
-    return ClinicInfo.fromJson(Map<String, dynamic>.from(result as Map));
-  }
+  /// Receptionist: saves the pin for their own clinic.
+  Future<void> updateClinicLocation(double latitude, double longitude) =>
+      _guard(() async {
+        final clinicId = _me.clinicId;
+        if (clinicId == null) {
+          throw ApiException(403, 'No clinic is assigned to this account.');
+        }
+        await _db.collection('clinics').doc(clinicId).update({
+          'latitude': latitude,
+          'longitude': longitude,
+        });
+      });
 
+  Future<ClinicInfo> clinic(String id) => _guard(() async {
+    final snap = await _db.collection('clinics').doc(id).get();
+    final data = snap.data();
+    if (data == null) throw ApiException(404, 'Clinic not found.');
+    final docs = await _db
+        .collection('doctors')
+        .where('clinicId', isEqualTo: id)
+        .where('active', isEqualTo: true)
+        .get();
+    return ClinicInfo.fromMap(
+      snap.id,
+      data,
+      doctors: [
+        for (final d in docs.docs) ClinicDoctor.fromMap(d.id, d.data()),
+      ],
+    );
+  });
+
+  // ---- slots and booking --------------------------------------------------
+
+  /// Half-hour slots inside the clinic's operating hours, minus booked ones.
+  /// With no hours saved on the clinic, Mon-Fri 09:00-17:00 is used.
   Future<List<AppointmentSlot>> slots({
-    required int clinicId,
-    required int doctorId,
+    required String clinicId,
+    required String doctorId,
     required DateTime date,
     required String mode,
-  }) async {
-    final path = Uri(
-      path: '/clinics/$clinicId/slots',
-      queryParameters: {
-        'doctor_id': '$doctorId',
-        'on': _dateOnly(date),
-        'mode': mode,
-      },
+  }) => _guard(() async {
+    final c = await _db.collection('clinics').doc(clinicId).get();
+    final hours = Map<String, dynamic>.from(
+      c.data()?['operatingHours'] as Map? ?? const {},
     );
-    final result = await _api.get(path.toString());
-    return (result as List)
-        .whereType<Map>()
-        .map(
-          (item) => AppointmentSlot.fromJson(Map<String, dynamic>.from(item)),
-        )
-        .toList();
-  }
+    var open = '09:00';
+    var close = '17:00';
+    var closed = false;
+    if (hours.isEmpty) {
+      closed = date.weekday >= 6;
+    } else {
+      final day = hours[_days[date.weekday - 1]];
+      if (day is! Map || day['closed'] == true) {
+        closed = true;
+      } else {
+        open = day['open']?.toString() ?? open;
+        close = day['close']?.toString() ?? close;
+      }
+    }
+    if (closed) return <AppointmentSlot>[];
+
+    final booked = await _db
+        .collection('bookedSlots')
+        .where('doctorId', isEqualTo: doctorId)
+        .get();
+    final taken = {
+      for (final d in booked.docs)
+        (d.data()['startsAt'] as Timestamp).millisecondsSinceEpoch,
+    };
+
+    const step = Duration(minutes: 30);
+    final end = _at(date, close);
+    final now = DateTime.now();
+    final out = <AppointmentSlot>[];
+    for (var t = _at(date, open); !t.add(step).isAfter(end); t = t.add(step)) {
+      if (t.isAfter(now) && !taken.contains(t.millisecondsSinceEpoch)) {
+        out.add(AppointmentSlot(startsAt: t, endsAt: t.add(step), mode: mode));
+      }
+    }
+    return out;
+  });
 
   Future<ClinicAppointment> book({
-    required int clinicId,
-    required int doctorId,
+    required String clinicId,
+    required String doctorId,
     required String mode,
     required DateTime startsAt,
-  }) async {
-    final result = await _api.post(
-      '/appointments',
-      body: {
-        'clinic_id': clinicId,
-        'doctor_id': doctorId,
-        'mode': mode,
-        'scheduled_at': startsAt.toUtc().toIso8601String(),
-      },
-    );
-    return _appointmentFromJson(Map<String, dynamic>.from(result as Map));
-  }
+  }) => _guard(() async {
+    final me = _me;
+    final clinicSnap = await _db.collection('clinics').doc(clinicId).get();
+    final doctorSnap = await _db.collection('doctors').doc(doctorId).get();
+    final clinic = clinicSnap.data() ?? {};
 
-  Future<List<ClinicAppointment>> appointments({String? state}) async {
-    final path = Uri(
-      path: '/appointments/mine',
-      queryParameters: state == null ? null : {'state': state},
-    );
-    final result = await _api.get(path.toString());
-    return (result as List)
-        .whereType<Map>()
-        .map((item) => _appointmentFromJson(Map<String, dynamic>.from(item)))
-        .toList();
-  }
-
-  Future<ClinicAppointment> appointment(int id) async {
-    final result = await _api.get('/appointments/$id');
-    return _appointmentFromJson(Map<String, dynamic>.from(result as Map));
-  }
-
-  Future<ClinicAppointment> cancel(int id, String reason) async {
-    final result = await _api.post(
-      '/appointments/$id/cancel',
-      body: {'reason': reason.trim()},
-    );
-    return _appointmentFromJson(Map<String, dynamic>.from(result as Map));
-  }
-
-  Future<String> consultation(int id) async {
-    final result = await _api.get('/appointments/$id/consultation');
-    return (result as Map<String, dynamic>)['consultation_url'] as String;
-  }
-
-  Future<List<ClinicNotification>> notifications({
-    bool unreadOnly = false,
-  }) async {
-    final result = await _api.get(
-      '/appointments/notifications/mine${unreadOnly ? '?unread_only=true' : ''}',
-    );
-    return (result as List)
-        .whereType<Map>()
-        .map(
-          (item) =>
-              ClinicNotification.fromJson(Map<String, dynamic>.from(item)),
-        )
-        .toList();
-  }
-
-  Future<void> markNotificationRead(int id) async {
-    await _api.patch('/appointments/notifications/$id/read');
-  }
-
-  Future<List<ClinicAppointment>> staffAppointments({String? state}) async {
-    final path = Uri(
-      path: '/appointments',
-      queryParameters: state == null ? null : {'state': state},
-    );
-    final result = await _api.get(path.toString());
-    return (result as List)
-        .whereType<Map>()
-        .map((item) => _appointmentFromJson(Map<String, dynamic>.from(item)))
-        .toList();
-  }
-
-  Future<void> reviewAppointment(int id, {required bool approve}) async {
-    if (approve) {
-      await _api.patch('/appointments/$id/approve');
-    } else {
-      await _api.patch('/appointments/$id/decline');
+    final ref = _db.collection('appointments').doc();
+    // One document per doctor and time: a second booking of the same time
+    // is refused by the security rules, so nobody can double-book.
+    final slotId = '${doctorId}_${startsAt.millisecondsSinceEpoch}';
+    final batch = _db.batch();
+    batch.set(_db.collection('bookedSlots').doc(slotId), {
+      'doctorId': doctorId,
+      'clinicId': clinicId,
+      'userId': me.id,
+      'appointmentId': ref.id,
+      'startsAt': Timestamp.fromDate(startsAt),
+    });
+    batch.set(ref, {
+      'userId': me.id,
+      'patientName': me.displayName ?? 'Patient',
+      'clinicId': clinicId,
+      'clinicName': clinic['name'],
+      'clinicAddress': clinic['address'],
+      'doctorId': doctorId,
+      'doctorName': doctorSnap.data()?['name'],
+      'mode': mode,
+      'scheduledAt': Timestamp.fromDate(startsAt),
+      'status': 'pending',
+      'reference': _reference(),
+      'slotId': slotId,
+      'cancellationReason': null,
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    try {
+      await batch.commit();
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
+        throw ApiException(
+          409,
+          'That time was just taken. Please choose another.',
+        );
+      }
+      rethrow;
     }
+    final saved = await ref.get();
+    return _appt(saved.id, saved.data()!);
+  });
+
+  Future<List<ClinicAppointment>> appointments({String? state}) =>
+      _guard(() async {
+        final snap = await _db
+            .collection('appointments')
+            .where('userId', isEqualTo: _me.id)
+            .get();
+        final list = [for (final d in snap.docs) _appt(d.id, d.data())]
+            .where((a) => _inState(a, state))
+            .toList();
+        list.sort(
+          (a, b) => (b.scheduledAt ?? b.createdAt).compareTo(
+            a.scheduledAt ?? a.createdAt,
+          ),
+        );
+        return list;
+      });
+
+  Future<ClinicAppointment> appointment(String id) => _guard(() async {
+    final snap = await _db.collection('appointments').doc(id).get();
+    final data = snap.data();
+    if (data == null) throw ApiException(404, 'Appointment not found.');
+    return _appt(snap.id, data);
+  });
+
+  Future<ClinicAppointment> cancel(String id, String reason) =>
+      _guard(() async {
+        final ref = _db.collection('appointments').doc(id);
+        final snap = await ref.get();
+        final slotId = snap.data()?['slotId'] as String?;
+        final batch = _db.batch();
+        batch.update(ref, {
+          'status': 'cancelled',
+          'cancellationReason': reason.trim(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        if (slotId != null) {
+          batch.delete(_db.collection('bookedSlots').doc(slotId));
+        }
+        await batch.commit();
+        final saved = await ref.get();
+        return _appt(saved.id, saved.data()!);
+      });
+
+  /// Free video room (Jitsi Meet), named after the appointment reference.
+  Future<String> consultation(String id) async {
+    final a = await appointment(id);
+    if (a.status != 'approved' || a.mode != 'online' || a.reference == null) {
+      throw ApiException(
+        409,
+        'The consultation link is only available for approved online appointments.',
+      );
+    }
+    return 'https://meet.jit.si/${a.reference}';
   }
 
-  Future<List<Map<String, dynamic>>> pendingDoctorApplications() async {
-    final result = await _api.get('/clinic/staff/pending');
+  // ---- notifications ------------------------------------------------------
 
-    return (result as List)
-        .whereType<Map>()
-        .map((item) => Map<String, dynamic>.from(item))
-        .toList();
+  Future<List<ClinicNotification>> notifications({bool unreadOnly = false}) =>
+      _guard(() async {
+        final snap = await _db
+            .collection('notifications')
+            .where('userId', isEqualTo: _me.id)
+            .get();
+        final list = [
+          for (final d in snap.docs)
+            ClinicNotification(
+              id: d.id,
+              appointmentId: (d.data()['appointmentId'] as String?) ?? '',
+              eventType: (d.data()['eventType'] as String?) ?? '',
+              title: (d.data()['title'] as String?) ?? '',
+              message: (d.data()['message'] as String?) ?? '',
+              createdAt: _dt(d.data()['createdAt']) ?? DateTime.now(),
+              isRead: d.data()['read'] == true,
+            ),
+        ].where((n) => !unreadOnly || !n.isRead).toList();
+        list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        return list;
+      });
+
+  Future<void> markNotificationRead(String id) => _guard(
+    () => _db.collection('notifications').doc(id).update({'read': true}),
+  );
+
+  // ---- staff ------------------------------------------------------------
+
+  /// Receptionist: all requests of the clinic. Doctor: only their own.
+  Future<List<ClinicAppointment>> staffAppointments({String? state}) =>
+      _guard(() async {
+        final me = _me;
+        Query<Map<String, dynamic>> q = _db
+            .collection('appointments')
+            .where('clinicId', isEqualTo: me.clinicId);
+        if (me.role == 'doctor') q = q.where('doctorId', isEqualTo: me.id);
+        final snap = await q.get();
+        final list = [for (final d in snap.docs) _appt(d.id, d.data())]
+            .where((a) => _inState(a, state))
+            .toList();
+        list.sort(
+          (a, b) => (a.scheduledAt ?? a.createdAt).compareTo(
+            b.scheduledAt ?? b.createdAt,
+          ),
+        );
+        return list;
+      });
+
+  Future<void> reviewAppointment(String id, {required bool approve}) =>
+      _guard(() async {
+        final me = _me;
+        final ref = _db.collection('appointments').doc(id);
+        final snap = await ref.get();
+        final data = snap.data();
+        if (data == null) throw ApiException(404, 'Appointment not found.');
+        final batch = _db.batch();
+        batch.update(ref, {
+          'status': approve ? 'approved' : 'rejected',
+          'reviewedBy': me.id,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        batch.set(_db.collection('notifications').doc(), {
+          'userId': data['userId'],
+          'appointmentId': id,
+          'eventType': approve ? 'approved' : 'rejected',
+          'title': approve ? 'Appointment approved' : 'Appointment rejected',
+          'message':
+              'Your appointment ${data['reference']} was '
+              '${approve ? 'approved' : 'rejected'} by the clinic.',
+          'read': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+        final slotId = data['slotId'] as String?;
+        if (!approve && slotId != null) {
+          batch.delete(_db.collection('bookedSlots').doc(slotId));
+        }
+        await batch.commit();
+      });
+  Future<List<Map<String, dynamic>>> pendingDoctorApplications() =>
+      _guard(() async {
+        final snap = await _db
+            .collection('users')
+            .where('clinicId', isEqualTo: _me.clinicId)
+            .where('role', isEqualTo: 'doctor')
+            .where('status', isEqualTo: 'pending')
+            .get();
+        return [
+          for (final d in snap.docs)
+            {
+              'id': d.id,
+              'first_name': d.data()['firstName'],
+              'last_name': d.data()['lastName'],
+              'email': d.data()['email'],
+              'professions': d.data()['professions'] ?? const [],
+            },
+        ];
+      });
+
+  Future<void> approveDoctorApplication(String staffId) => _guard(() async {
+    final me = _me;
+    final ref = _db.collection('users').doc(staffId);
+    final u = (await ref.get()).data();
+    if (u == null) throw ApiException(404, 'Application not found.');
+    final batch = _db.batch();
+    batch.update(ref, {'status': 'active'});
+    // The public doctor card that patients see when booking.
+    batch.set(_db.collection('doctors').doc(staffId), {
+      'userId': staffId,
+      'clinicId': me.clinicId,
+      'name': u['name'],
+      'specializations': u['professions'] ?? const [],
+      'professionalInfo': null,
+      'supportsOnline': true,
+      'supportsPhysical': true,
+      'active': true,
+    });
+    await batch.commit();
+  });
+
+  Future<void> rejectDoctorApplication(String staffId) => _guard(
+    () => _db.collection('users').doc(staffId).update({'status': 'rejected'}),
+  );
+
+  /// Live list for the website: receptionist = whole clinic, doctor = own.
+  Stream<List<ClinicAppointment>> staffAppointmentsStream() {
+    final me = _me;
+    Query<Map<String, dynamic>> q = _db
+        .collection('appointments')
+        .where('clinicId', isEqualTo: me.clinicId);
+    if (me.role == 'doctor') q = q.where('doctorId', isEqualTo: me.id);
+    return q.snapshots().map((snap) {
+      final list = [for (final d in snap.docs) _appt(d.id, d.data())];
+      list.sort(
+        (a, b) => (a.scheduledAt ?? a.createdAt).compareTo(
+          b.scheduledAt ?? b.createdAt,
+        ),
+      );
+      return list;
+    });
   }
 
-  Future<Map<String, dynamic>> approveDoctorApplication(int staffId) async {
-    final result = await _api.post('/clinic/staff/$staffId/approve');
-
-    return Map<String, dynamic>.from(result as Map);
-  }
-
-  Future<Map<String, dynamic>> rejectDoctorApplication(int staffId) async {
-    final result = await _api.post('/clinic/staff/$staffId/reject');
-
-    return Map<String, dynamic>.from(result as Map);
-  }
-
-  ClinicAppointment _appointmentFromJson(Map<String, dynamic> json) {
-    final clinicId = json['clinic_id'] as int?;
-    return ClinicAppointment(
-      id: json['id'] as int,
-      userId: json['user_id'] as int,
-      status: json['status'] as String,
-      mode: json['mode'] as String?,
-      scheduledAt: (json['scheduled_at'] as String?) == null
-          ? null
-          : DateTime.parse(json['scheduled_at'] as String).toUtc(),
-      createdAt: DateTime.parse(json['created_at'] as String),
-      updatedAt: json['updated_at'] == null
-          ? DateTime.parse(json['created_at'] as String)
-          : DateTime.parse(json['updated_at'] as String),
-      clinicId: clinicId,
-      clinicName: json['clinic_name'] as String?,
-      clinicAddress: json['clinic_address'] as String?,
-      doctorId: json['doctor_id'] as int?,
-      doctorName: json['doctor_name'] as String?,
-      reference: json['reference'] as String?,
-      cancellationReason: json['cancellation_reason'] as String?,
-      isDemo: json['is_demo'] as bool? ?? false,
+  /// The receptionists and doctors of the clinic (read-only).
+  Future<List<Map<String, dynamic>>> staffList() => _guard(() async {
+    final snap = await _db
+        .collection('users')
+        .where('clinicId', isEqualTo: _me.clinicId)
+        .get();
+    final list = [
+      for (final d in snap.docs)
+        if (d.data()['role'] == 'doctor' || d.data()['role'] == 'receptionist')
+          {
+            'id': d.id,
+            'name': d.data()['name'],
+            'email': d.data()['email'],
+            'role': d.data()['role'],
+            'status': d.data()['status'] ?? 'active',
+            'professions': d.data()['professions'] ?? const [],
+          },
+    ];
+    list.sort(
+      (a, b) =>
+          '${a['name']}'.toLowerCase().compareTo('${b['name']}'.toLowerCase()),
     );
-  }
-
-  static String _dateOnly(DateTime value) =>
-      '${value.year.toString().padLeft(4, '0')}-'
-      '${value.month.toString().padLeft(2, '0')}-'
-      '${value.day.toString().padLeft(2, '0')}';
+    return list;
+  });
 }
 
 String appointmentStatusLabel(String status) => switch (status) {

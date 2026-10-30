@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/auth_service.dart';
+import '../screening/progress_banner.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -53,7 +54,9 @@ class HomeScreen extends StatelessWidget {
                 'Find a clinic, request an appointment, and keep track of your care.',
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 28),
+              const SizedBox(height: 20),
+              const ProgressBanner(),
+              const SizedBox(height: 20),
               FilledButton.icon(
                 onPressed: () => context.push('/clinics'),
                 icon: const Icon(Icons.search),
@@ -77,17 +80,6 @@ class HomeScreen extends StatelessWidget {
                 icon: const Icon(Icons.chat_bubble_outline),
                 label: const Text('Message a clinic'),
               ),
-              const SizedBox(height: 12),
-              if (user == null || user.isGuest)
-                TextButton(
-                  onPressed: () => context.push(
-                    Uri(
-                      path: '/signup',
-                      queryParameters: {'next': '/home'},
-                    ).toString(),
-                  ),
-                  child: const Text('Create Account'),
-                ),
             ],
           ),
         ),

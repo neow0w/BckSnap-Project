@@ -92,10 +92,7 @@ class _ClinicDiscoveryScreenState extends State<ClinicDiscoveryScreen> {
       }
     } on ApiException catch (error) {
       if (kDebugMode) {
-        debugPrint(
-          'Clinic discovery request to ${ApiClient.diagnosticOrigin} failed '
-          '(HTTP/status ${error.statusCode}).',
-        );
+        debugPrint('Clinic discovery failed (${error.statusCode}).');
       }
       if (mounted && requestId == _loadRequestId) {
         setState(() {

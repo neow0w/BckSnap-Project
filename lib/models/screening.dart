@@ -1,10 +1,13 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 class Screening {
-  final int id;
-  final int userId;
+  final String id;
+  final String userId;
   final double angle;
   final bool hasScoliosis;
   final bool hasPhoto;
   final DateTime createdAt;
+  final Map<String, dynamic>? details; // levels and posture of the screening
 
   const Screening({
     required this.id,
@@ -13,14 +16,20 @@ class Screening {
     required this.hasScoliosis,
     required this.hasPhoto,
     required this.createdAt,
+    this.details,
   });
 
-  factory Screening.fromJson(Map<String, dynamic> json) => Screening(
-    id: json['id'] as int,
-    userId: json['user_id'] as int,
-    angle: (json['angle'] as num).toDouble(),
-    hasScoliosis: json['has_scoliosis'] as bool,
-    hasPhoto: json['has_photo'] as bool,
-    createdAt: DateTime.parse(json['created_at'] as String).toLocal(),
+  factory Screening.fromMap(String id, Map<String, dynamic> m) => Screening(
+    id: id,
+    userId: m['userId'] as String,
+    angle: (m['angle'] as num).toDouble(),
+    hasScoliosis: m['hasScoliosis'] == true,
+    hasPhoto: m['hasPhoto'] == true,
+    createdAt: m['createdAt'] is Timestamp
+        ? (m['createdAt'] as Timestamp).toDate()
+        : DateTime.now(),
+    details: m['details'] is Map
+        ? Map<String, dynamic>.from(m['details'] as Map)
+        : null,
   );
 }

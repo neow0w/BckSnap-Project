@@ -6,7 +6,7 @@ import '../../services/message_service.dart';
 import '../../models/message.dart';
 
 class MessageScreen extends StatefulWidget {
-  final int clinicId;
+  final String clinicId;
 
   const MessageScreen({super.key, required this.clinicId});
 

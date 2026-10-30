@@ -1,6 +1,12 @@
 import 'dart:typed_data';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 import '../core/format.dart';
+import '../core/image_compress.dart';
 import '../models/app_user.dart';
 import 'api_client.dart';
 
@@ -10,144 +16,90 @@ class AuthService {
   factory AuthService() => _instance;
   AuthService._();
 
-  final ApiClient _api = ApiClient.instance;
-
-  /// Create a receptionist or submit a doctor application.
-  Future<Map<String, dynamic>> createManagedStaff({
-    required String firstName,
-    required String lastName,
-    required DateTime dateOfBirth,
-    required List<String> professions,
-    required String email,
-    required String password,
-    required String role,
-  }) async {
-    final data = await _api.post(
-      '/clinic/staff/managed',
-      body: {
-        'first_name': firstName.trim(),
-        'last_name': lastName.trim(),
-        'date_of_birth':
-            '${dateOfBirth.year.toString().padLeft(4, '0')}-'
-            '${dateOfBirth.month.toString().padLeft(2, '0')}-'
-            '${dateOfBirth.day.toString().padLeft(2, '0')}',
-        'professions': professions,
-        'email': email.trim().toLowerCase(),
-        'password': password,
-        'role': role,
-      },
-    );
-
-    return Map<String, dynamic>.from(data as Map);
-  }
-
-  /// List pending doctor applications for the logged-in receptionist.
-  Future<List<Map<String, dynamic>>> getPendingDoctorApplications() async {
-    final data = await _api.get('/clinic/staff/pending');
-
-    return (data as List)
-        .map((item) => Map<String, dynamic>.from(item as Map))
-        .toList();
-  }
-
-  /// Approve a pending doctor application.
-  Future<Map<String, dynamic>> approveDoctorApplication(int staffId) async {
-    final data = await _api.post('/clinic/staff/$staffId/approve');
-
-    return Map<String, dynamic>.from(data as Map);
-  }
-
-  /// Reject a pending doctor application.
-  Future<Map<String, dynamic>> rejectDoctorApplication(int staffId) async {
-    final data = await _api.post('/clinic/staff/$staffId/reject');
-
-    return Map<String, dynamic>.from(data as Map);
-  }
+  final FirebaseAuth _fa = FirebaseAuth.instance;
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
 
   AppUser? _user;
-  Map<String, dynamic>? _clinic;
-
   AppUser? get currentUser => _user;
-  Map<String, dynamic>? get currentClinic => _clinic;
-  bool get isClinicLoggedIn => _clinic != null;
-
-  // A guest is anyone not logged in, or using a guest account.
-  bool get isGuest => _user == null || _user!.isGuest;
+  bool get isLoggedIn => _user != null;
 
   /// Runs once when the app starts: restores the saved login, if any.
   Future<void> init() async {
     try {
-      await _api.loadToken();
-      if (!_api.hasToken) return;
-
-      if (_api.accountType == 'clinic') {
-        await _refreshClinic();
-      } else {
-        await _refresh();
-      }
-    } on ApiException catch (e) {
-      if (e.statusCode == 401) {
-        await _api.clearToken();
-        _user = null;
-        _clinic = null;
-      }
+      final fbUser = await _fa.authStateChanges().first;
+      if (fbUser != null) await _loadProfile(fbUser.uid);
     } catch (_) {
-      // The app can still open if startup restoration fails.
+      _user = null; // the app still opens; the user can log in again
     }
   }
 
-  Future<void> _refresh() async {
-    try {
-      final data = await _api.get('/auth/me');
-      _user = AppUser.fromJson(data as Map<String, dynamic>);
-    } on ApiException catch (e) {
-      if (e.statusCode == 401) {
-        await _api.clearToken(); // saved token expired or invalid
-        _user = null;
-      } else {
-        rethrow;
-      }
-    }
-  }
-
-  Future<void> _refreshClinic() async {
-    try {
-      final data = await _api.get('/auth/clinic/me');
-      _clinic = Map<String, dynamic>.from(data as Map);
+  Future<void> _loadProfile(String uid) async {
+    final snap = await _db.collection('users').doc(uid).get();
+    final data = snap.data();
+    if (data == null) {
+      await _fa.signOut();
       _user = null;
-    } on ApiException catch (e) {
-      if (e.statusCode == 401) {
-        await _api.clearToken();
-        _clinic = null;
-        _user = null;
-      } else {
-        rethrow;
-      }
+      throw ApiException(404, 'This account has no profile. Please sign up.');
+    }
+    final u = AppUser.fromMap(uid, data);
+    if (kIsWeb && u.role == 'user') {
+      await _fa.signOut();
+      _user = null;
+      throw ApiException(
+        403,
+        'This website is for clinic staff. Patients please use the mobile app.',
+      );
+    }
+    if (u.role == 'doctor' && u.status != 'active') {
+      await _fa.signOut();
+      _user = null;
+      throw ApiException(
+        403,
+        u.status == 'rejected' ? 'Your doctor application was rejected.' : 'Your doctor account is waiting for approval by the receptionist.',
+      );
+    }
+    _user = u;
+  }
+
+  ApiException _authError(FirebaseAuthException e) {
+    switch (e.code) {
+      case 'invalid-credential':
+      case 'wrong-password':
+      case 'user-not-found':
+      case 'invalid-login-credentials':
+        return ApiException(401, 'Incorrect email or password.');
+      case 'email-already-in-use':
+        return ApiException(
+          409,
+          'That email is already registered. Try logging in.',
+        );
+      case 'weak-password':
+      case 'invalid-email':
+        return ApiException(
+          422,
+          e.message ?? 'Please check the details you entered.',
+        );
+      case 'too-many-requests':
+        return ApiException(
+          429,
+          'Too many attempts. Please wait a moment and try again.',
+        );
+      case 'user-disabled':
+        return ApiException(403, 'This account has been disabled.');
+      case 'network-request-failed':
+        return ApiException(
+          0,
+          'Cannot reach the server. Check your internet connection and try again.',
+        );
+      default:
+        return ApiException(
+          500,
+          'Something went wrong (${e.code}). Please try again.',
+        );
     }
   }
 
-  Future<void> _apply(dynamic data) async {
-    final map = data as Map<String, dynamic>;
-    await _api.saveToken(map['access_token'] as String, accountType: 'user');
-
-    _user = AppUser.fromJson(map['user'] as Map<String, dynamic>);
-    _clinic = null;
-  }
-
-  // Fig 7: a new visitor screens as a guest (temporary account).
-  Future<void> signInAsGuest() async {
-    if (_user != null) return;
-    if (_api.hasToken) {
-      await _refresh();
-      if (_user != null) return;
-    }
-    await _apply(await _api.post('/auth/guest'));
-  }
-
-  // Fig 7: Sign up. The API upgrades the guest account, so the
-  // screening the guest already did is kept.
-  //
-  // Consent is sent with the account so the server can store it as a record.
+  // Sign up. Consent is stored with the account as a record.
   // For ages 9-17 the guardian and assent fields are filled in.
   Future<void> signUp({
     required String name,
@@ -161,126 +113,195 @@ class AuthService {
     bool guardianConsent = false,
     bool minorAssent = false,
   }) async {
-    await _apply(
-      await _api.post(
-        '/auth/signup',
-        body: {
-          'name': name,
-          'email': email,
-          'password': password,
-          'date_of_birth': isoDate(dateOfBirth),
-          'privacy_notice_version': privacyVersion,
-          'privacy_consent': true,
-          'health_data_consent': true,
-          'consented_at': DateTime.now().toUtc().toIso8601String(),
-          'guardian_name': ?guardianName,
-          'guardian_relationship': ?guardianRelationship,
-          'guardian_contact': ?guardianContact,
-          'guardian_consent': guardianConsent,
-          'minor_assent': minorAssent,
-        },
-      ),
-    );
+    UserCredential? cred;
+    try {
+      cred = await _fa.createUserWithEmailAndPassword(
+        email: email.trim(),
+        password: password,
+      );
+      final uid = cred.user!.uid;
+      await _db.collection('users').doc(uid).set({
+        'name': name.trim(),
+        'email': email.trim().toLowerCase(),
+        'role': 'user',
+        'status': 'active',
+        'clinicId': null,
+        'phone': null,
+        'address': null,
+        'hasPhoto': false,
+        'dateOfBirth': isoDate(dateOfBirth),
+        'privacyNoticeVersion': privacyVersion,
+        'privacyConsent': true,
+        'healthDataConsent': true,
+        'consentedAt': FieldValue.serverTimestamp(),
+        'guardianName': guardianName,
+        'guardianRelationship': guardianRelationship,
+        'guardianContact': guardianContact,
+        'guardianConsent': guardianConsent,
+        'minorAssent': minorAssent,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+      await _loadProfile(uid);
+    } on FirebaseAuthException catch (e) {
+      throw _authError(e);
+    } on FirebaseException catch (e) {
+      try {
+        await cred?.user?.delete(); // do not leave a login without a profile
+      } catch (_) {}
+      throw apiErrorFrom(e);
+    }
   }
 
-  // Fig 7: Login
   Future<void> login({required String email, required String password}) async {
     try {
-      final data = await _api.post(
-        '/auth/login',
-        body: {'email': email, 'password': password},
+      final cred = await _fa.signInWithEmailAndPassword(
+        email: email.trim(),
+        password: password,
       );
-
-      final map = Map<String, dynamic>.from(data as Map);
-
-      await _api.saveToken(map['access_token'] as String, accountType: 'user');
-
-      _user = AppUser.fromJson(Map<String, dynamic>.from(map['user'] as Map));
-      _clinic = null;
-      return;
-    } on ApiException catch (e) {
-      // Only try clinic login if the credentials were rejected.
-      if (e.statusCode != 401 && e.statusCode != 403) {
-        rethrow;
-      }
+      await _loadProfile(cred.user!.uid);
+    } on FirebaseAuthException catch (e) {
+      throw _authError(e);
+    } on FirebaseException catch (e) {
+      throw apiErrorFrom(e);
     }
-
-    final data = await _api.post(
-      '/auth/clinic/login',
-      body: {'email': email, 'password': password},
-    );
-
-    final map = Map<String, dynamic>.from(data as Map);
-
-    await _api.saveToken(map['access_token'] as String, accountType: 'clinic');
-
-    _clinic = Map<String, dynamic>.from(map['clinic'] as Map);
-    _user = null;
   }
 
-  // Fig 7: Reset password, step 1 -> "Password reset email sent"
+  // Firebase emails a reset LINK (there is no code step any more).
   Future<void> resetPassword(String email) async {
-    await _api.post('/auth/forgot-password', body: {'email': email});
-  }
-
-  // Reset password, step 2: the code from the email + the new password.
-  // FIELD NAMES: change 'token' / 'new_password' if your API differs.
-  Future<void> confirmPasswordReset({
-    required String token,
-    required String newPassword,
-  }) async {
-    await _api.post(
-      '/auth/reset-password',
-      body: {'token': token, 'new_password': newPassword},
-    );
+    try {
+      await _fa.sendPasswordResetEmail(email: email.trim());
+    } on FirebaseAuthException catch (e) {
+      // Do not reveal whether the email has an account.
+      if (e.code == 'user-not-found') return;
+      throw _authError(e);
+    }
   }
 
   // ---- profile --------------------------------------------------------
 
-  /// PATCH /auth/me. Empty phone/address are sent as null (= cleared).
   Future<void> updateProfile({
     required String name,
     String? phone,
     String? address,
   }) async {
-    final data = await _api.patch(
-      '/auth/me',
-      body: {'name': name, 'phone': phone, 'address': address},
-    );
-    if (data is Map<String, dynamic> && data.containsKey('id')) {
-      _user = AppUser.fromJson(data);
-    } else {
-      await _refresh();
+    final u = _user;
+    if (u == null) throw ApiException(401, 'Please log in again.');
+    try {
+      await _db.collection('users').doc(u.id).update({
+        'name': name,
+        'phone': phone,
+        'address': address,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      await _loadProfile(u.id);
+    } on FirebaseException catch (e) {
+      throw apiErrorFrom(e);
     }
   }
 
-  /// POST /auth/me/photo (multipart, field name "photo")
+  /// Compresses the picture (about 256 px, under 30 KB) and stores it in Firestore.
   Future<void> uploadPhoto(Uint8List bytes, String fileName) async {
-    await _api.postMultipart(
-      '/auth/me/photo',
-      fileField: 'photo',
-      fileBytes: bytes,
-      fileName: fileName,
-    );
-    await _refresh();
+    final u = _user;
+    if (u == null) throw ApiException(401, 'Please log in again.');
+    try {
+      final small = await ImageCompressor.shrink(
+        bytes,
+        maxSide: 256,
+        quality: 70,
+        maxBytes: 30 * 1024,
+      );
+      await _db.collection('profilePhotos').doc(u.id).set({
+        'data': Blob(small),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      await _db.collection('users').doc(u.id).update({
+        'hasPhoto': true,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      await _loadProfile(u.id);
+    } on FirebaseException catch (e) {
+      throw apiErrorFrom(e);
+    }
   }
 
-  /// GET /auth/me/photo. Null when there is no picture (or it failed).
+  /// Null when there is no picture (or it failed).
   Future<Uint8List?> loadMyPhoto() async {
-    if (_user?.hasPhoto != true) return null;
+    final u = _user;
+    if (u?.hasPhoto != true) return null;
     try {
-      return await _api.getBytes('/auth/me/photo');
-    } on ApiException {
+      final snap = await _db.collection('profilePhotos').doc(u!.id).get();
+      final data = snap.data()?['data'];
+      return data is Blob ? data.bytes : null;
+    } catch (_) {
       return null;
     }
   }
 
   Future<void> logout() async {
-    await _api.clearToken();
+    await _fa.signOut();
     _user = null;
-    _clinic = null;
   }
 
-  // Fig 7: "Is the user an admin?"  Returns 'user', 'receptionist' or 'doctor'.
+  /// 'user', 'receptionist' or 'doctor'.
   Future<String> getRole() async => _user?.role ?? 'user';
+
+  /// Creates a doctor (pending approval) or a receptionist for the
+  /// receptionist's clinic. A second, temporary Firebase app is used so the
+  /// receptionist stays signed in.
+  Future<void> createStaff({
+    required String firstName,
+    required String lastName,
+    required DateTime dateOfBirth,
+    required List<String> professions,
+    required String email,
+    required String password,
+    required String role,
+  }) async {
+    final me = _user;
+    if (me == null || me.role != 'receptionist' || me.clinicId == null) {
+      throw ApiException(403, 'Only a receptionist can add staff.');
+    }
+    FirebaseApp app;
+    try {
+      app = Firebase.app('staffCreator');
+    } catch (_) {
+      app = await Firebase.initializeApp(
+        name: 'staffCreator',
+        options: Firebase.app().options,
+      );
+    }
+    final second = FirebaseAuth.instanceFor(app: app);
+    try {
+      final cred = await second.createUserWithEmailAndPassword(
+        email: email.trim(),
+        password: password,
+      );
+      try {
+        await _db.collection('users').doc(cred.user!.uid).set({
+          'firstName': firstName.trim(),
+          'lastName': lastName.trim(),
+          'name': '${firstName.trim()} ${lastName.trim()}',
+          'email': email.trim().toLowerCase(),
+          'role': role,
+          'status': role == 'doctor' ? 'pending' : 'active',
+          'clinicId': me.clinicId,
+          'professions': professions,
+          'dateOfBirth': isoDate(dateOfBirth),
+          'phone': null,
+          'address': null,
+          'hasPhoto': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      } catch (_) {
+        await cred.user!.delete();
+        rethrow;
+      } finally {
+        await second.signOut();
+      }
+    } on FirebaseAuthException catch (e) {
+      throw _authError(e);
+    } on FirebaseException catch (e) {
+      throw apiErrorFrom(e);
+    }
+  }
 }

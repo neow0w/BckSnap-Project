@@ -132,7 +132,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
           ),
           const SizedBox(height: 8),
           const Text(
-            'Enter the email of your account and we will send you a code '
+            'Enter the email of your account and we will send you a link '
             'to reset your password.',
             textAlign: TextAlign.center,
           ),
@@ -162,7 +162,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
                     width: 20,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Text('Send reset code'),
+                : const Text('Send reset link'),
           ),
           const SizedBox(height: 12),
           TextButton(
@@ -187,16 +187,16 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
         ),
         const SizedBox(height: 8),
         Text(
-          'If an account exists for $_sentTo, a reset code is on its way. '
-          'Check your inbox and spam folder. The code expires after a short '
-          'time.',
+          'If an account exists for $_sentTo, a reset link is on its way. '
+          'Open the link, choose a new password, then log in. Check your '
+          'spam folder too.',
           textAlign: TextAlign.center,
         ),
         _errorBox(),
         const SizedBox(height: 24),
         FilledButton(
-          onPressed: () => context.go('/reset/confirm', extra: _sentTo),
-          child: const Text('I have the code'),
+          onPressed: () => context.go('/login'),
+          child: const Text('Back to login'),
         ),
         const SizedBox(height: 12),
         OutlinedButton(

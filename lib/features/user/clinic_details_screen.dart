@@ -7,7 +7,7 @@ import '../../services/clinic_service.dart';
 class ClinicDetailsScreen extends StatefulWidget {
   const ClinicDetailsScreen({required this.clinicId, super.key});
 
-  final int clinicId;
+  final String clinicId;
 
   @override
   State<ClinicDetailsScreen> createState() => _ClinicDetailsScreenState();

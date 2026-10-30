@@ -189,7 +189,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
 class AppointmentDetailsScreen extends StatefulWidget {
   const AppointmentDetailsScreen({required this.appointmentId, super.key});
 
-  final int appointmentId;
+  final String appointmentId;
 
   @override
   State<AppointmentDetailsScreen> createState() =>
@@ -495,7 +495,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         }
       }
     }
-    if (mounted) context.push('/appointments/${notification.appointmentId}');
+    if (!mounted) return;
+    if (notification.eventType == 'screening_due') {
+      context.push('/progress');
+    } else {
+      context.push('/appointments/${notification.appointmentId}');
+    }
   }
 
   @override

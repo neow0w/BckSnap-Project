@@ -8,8 +8,8 @@ import '../../services/message_service.dart';
 /// A conversation with one patient: GET + POST /messages/patient/{id}.
 /// Also used by "Contact patient for physical visit" in Figure 9.
 class PatientChatScreen extends StatefulWidget {
-  final int patientId;
-  final int clinicId;
+  final String patientId;
+  final String clinicId;
   final String? patientName;
 
   const PatientChatScreen({

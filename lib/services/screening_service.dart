@@ -1,37 +1,137 @@
 import 'dart:typed_data';
-import 'dart:convert';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+import '../core/image_compress.dart';
 import '../models/screening.dart';
 import 'api_client.dart';
+import 'auth_service.dart';
 
 class ScreeningService {
-  final ApiClient _api = ApiClient.instance;
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  // Saves one screening to the API, with the back photo if we have one.
-  // The server decides has_scoliosis itself, using its 7-degree setting.
-  Future<int?> saveScreening({
+  // Same limit as ResultRules.referAtr.
+  static const double _referAtr = 7.0;
+
+  /// Saves one screening, with the compressed back photo if we have one.
+  Future<String?> saveScreening({
     required double angle,
     Uint8List? photoBytes,
     String? photoName,
     Map<String, dynamic>? details,
   }) async {
-    final data = await _api.postMultipart(
-      '/screenings',
-      fields: {
-        'angle': angle.toString(),
-        if (details != null) 'details': jsonEncode(details),
-      },
-      fileBytes: photoBytes,
-      fileName: photoName,
-    ) as Map<String, dynamic>;
-    return data['id'] as int?;
+    final me = AuthService().currentUser;
+    if (me == null) throw ApiException(401, 'Please log in again.');
+    try {
+      final small = photoBytes == null
+          ? null
+          : await ImageCompressor.shrink(
+              photoBytes,
+              maxSide: 720,
+              quality: 60,
+              maxBytes: 120 * 1024,
+            );
+      final ref = _db.collection('screenings').doc();
+      final batch = _db.batch();
+      batch.set(ref, {
+        'userId': me.id,
+        'angle': angle,
+        'hasScoliosis': angle >= _referAtr,
+        'hasPhoto': small != null,
+        'details': details,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+      if (small != null) {
+        batch.set(_db.collection('screeningPhotos').doc(ref.id), {
+          'userId': me.id,
+          'data': Blob(small),
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
+      return ref.id;
+    } on FirebaseException catch (e) {
+      throw apiErrorFrom(e);
+    }
   }
 
-  // The logged-in user's screenings, newest first.
+  /// The logged-in user's screenings, newest first.
   Future<List<Screening>> myScreenings() async {
-    final data = await _api.get('/screenings/mine') as List<dynamic>;
-    return data
-        .map((e) => Screening.fromJson(e as Map<String, dynamic>))
-        .toList();
+    final me = AuthService().currentUser;
+    if (me == null) return [];
+    try {
+      final snap = await _db
+          .collection('screenings')
+          .where('userId', isEqualTo: me.id)
+          .get();
+      final list = [
+        for (final d in snap.docs) Screening.fromMap(d.id, d.data()),
+      ];
+      list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return list;
+    } on FirebaseException catch (e) {
+      throw apiErrorFrom(e);
+    }
+  }
+
+  /// Leaves a "monthly check-up" notification for this screening (once).
+  Future<void> createDueReminder(Screening latest) async {
+    final me = AuthService().currentUser;
+    if (me == null) return;
+    try {
+      final existing = await _db
+          .collection('notifications')
+          .where('userId', isEqualTo: me.id)
+          .get();
+      final already = existing.docs.any(
+        (d) => d.data()['screeningId'] == latest.id,
+      );
+      if (already) return;
+      await _db.collection('notifications').doc('due_${latest.id}').set({
+        'userId': me.id,
+        'screeningId': latest.id,
+        'appointmentId': '',
+        'eventType': 'screening_due',
+        'title': 'Time for your monthly check-up',
+        'message':
+            'It has been a month since your last screening. Repeat the '
+            'screening and scoliometer reading to see how you are doing.',
+        'read': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } on FirebaseException {
+      // A reminder is a nice-to-have: never block the home screen on it.
+    }
+  }
+
+  /// Staff: one patient's screenings, newest first.
+  Future<List<Screening>> screeningsOf(String userId) async {
+    try {
+      final snap = await _db
+          .collection('screenings')
+          .where('userId', isEqualTo: userId)
+          .get();
+      final list = [
+        for (final d in snap.docs) Screening.fromMap(d.id, d.data()),
+      ];
+      list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return list;
+    } on FirebaseException catch (e) {
+      throw apiErrorFrom(e);
+    }
+  }
+
+  /// Staff: the compressed back photo of one screening (null if none).
+  Future<Uint8List?> photoOf(String screeningId) async {
+    try {
+      final snap = await _db
+          .collection('screeningPhotos')
+          .doc(screeningId)
+          .get();
+      final data = snap.data()?['data'];
+      return data is Blob ? data.bytes : null;
+    } on FirebaseException catch (e) {
+      throw apiErrorFrom(e);
+    }
   }
 }

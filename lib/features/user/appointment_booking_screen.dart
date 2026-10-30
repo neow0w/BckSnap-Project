@@ -7,7 +7,7 @@ import '../../services/clinic_service.dart';
 class AppointmentBookingScreen extends StatefulWidget {
   const AppointmentBookingScreen({required this.clinicId, super.key});
 
-  final int clinicId;
+  final String clinicId;
 
   @override
   State<AppointmentBookingScreen> createState() =>

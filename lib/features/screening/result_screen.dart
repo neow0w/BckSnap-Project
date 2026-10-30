@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../services/auth_service.dart';
 import 'posture_analysis.dart';
 import 'screening_result.dart';
 
@@ -11,9 +10,8 @@ class ResultScreen extends StatelessWidget {
 
   // "Did the user use the app as a guest?"
   // YES -> Sign up, NO -> User Home (connector A)
-  void _goToReferral(BuildContext context) {
-    context.go(AuthService().isGuest ? '/signup' : '/home');
-  }
+  // Everyone is logged in now: go to the user home (connector A).
+  void _goToReferral(BuildContext context) => context.go('/home');
 
   String _deg(double v) => '${v.toStringAsFixed(1)}°';
 

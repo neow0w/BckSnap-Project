@@ -180,6 +180,29 @@ class TiltSensor {
     return hi - lo <= TiltRules.steadyRange;
   }
 
+  /// Movement (highest minus lowest angle, degrees) over the last [window].
+  /// Null when the sensor has not delivered enough data yet.
+  double? recentRange([Duration window = const Duration(seconds: 1)]) {
+    if (testMode) return 0;
+    final cutoff =
+        DateTime.now().microsecondsSinceEpoch - window.inMicroseconds;
+    final recent = _history.where((s) => s.us >= cutoff).toList();
+    if (recent.length < TiltRules.minSamples) return null;
+    var lo = recent.first.angle;
+    var hi = lo;
+    for (final s in recent) {
+      lo = math.min(lo, s.angle);
+      hi = math.max(hi, s.angle);
+    }
+    return hi - lo;
+  }
+
+  /// Forgets the zero, so the angle shows the raw tilt again.
+  void clearZero() {
+    _zeroOffset = 0;
+    angle.value = _angle;
+  }
+
   /// Takes a reading: the average angle over [TiltRules.captureWindow].
   /// Returns null when the sensor delivered no data.
   Future<TiltReading?> capture() async {

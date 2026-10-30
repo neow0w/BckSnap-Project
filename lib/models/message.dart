@@ -1,6 +1,8 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 /// One message in a patient <-> clinic thread.
 class ChatMessage {
-  final int id;
+  final String id;
   final String body;
   final bool fromPatient;
   final DateTime createdAt; // local time
@@ -12,24 +14,19 @@ class ChatMessage {
     required this.createdAt,
   });
 
-  // FIELD NAMES: change the keys here if your API differs.
-  factory ChatMessage.fromJson(Map<String, dynamic> json) {
-    final role = (json['sender_role'] ?? '').toString().toLowerCase();
-    final fromPatient = json['from_patient'] is bool
-        ? json['from_patient'] as bool
-        : (role == 'user' || role == 'patient');
-    return ChatMessage(
-      id: json['id'] as int,
-      body: (json['body'] ?? '') as String,
-      fromPatient: fromPatient,
-      createdAt: parseUtc(json['created_at'] as String),
-    );
-  }
+  factory ChatMessage.fromMap(String id, Map<String, dynamic> m) => ChatMessage(
+    id: id,
+    body: (m['body'] ?? '') as String,
+    fromPatient: m['fromPatient'] == true,
+    createdAt: m['createdAt'] is Timestamp
+        ? (m['createdAt'] as Timestamp).toDate()
+        : DateTime.now(),
+  );
 }
 
 /// One row of the receptionist's inbox (one patient conversation).
 class InboxItem {
-  final int patientId;
+  final String patientId;
   final String patientName;
   final String lastMessage;
   final DateTime? lastAt;
@@ -41,30 +38,14 @@ class InboxItem {
     this.lastAt,
   });
 
-  factory InboxItem.fromJson(Map<String, dynamic> json) {
-    final at = json['last_at'] ?? json['created_at'];
-    return InboxItem(
-      patientId: (json['patient_id'] ?? json['id']) as int,
-      patientName: (json['patient_name'] ?? json['name'] ?? 'Patient')
-          .toString(),
-      lastMessage: (json['last_message'] ?? json['body'] ?? '').toString(),
-      lastAt: at is String ? parseUtc(at) : null,
-    );
-  }
-}
-
-/// The API stores UTC. If the text has no "Z", treat it as UTC anyway.
-DateTime parseUtc(String s) {
-  final d = DateTime.parse(s);
-  if (d.isUtc) return d.toLocal();
-  return DateTime.utc(
-    d.year,
-    d.month,
-    d.day,
-    d.hour,
-    d.minute,
-    d.second,
-  ).toLocal();
+  factory InboxItem.fromMap(Map<String, dynamic> m) => InboxItem(
+    patientId: m['patientId'] as String,
+    patientName: (m['patientName'] ?? 'Patient').toString(),
+    lastMessage: (m['lastMessage'] ?? '').toString(),
+    lastAt: m['lastAt'] is Timestamp
+        ? (m['lastAt'] as Timestamp).toDate()
+        : null,
+  );
 }
 
 String timeLabel(DateTime d) {

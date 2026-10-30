@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
-import '../../services/auth_service.dart';
 import '../../services/screening_draft.dart';
 
 class PhotoScreen extends StatefulWidget {
@@ -18,14 +17,6 @@ class _PhotoScreenState extends State<PhotoScreen> {
   final ImagePicker _picker = ImagePicker();
   Uint8List? _photoBytes;
   String? _photoName;
-
-  @override
-  void initState() {
-    super.initState();
-    // Make sure there is a session (guest or logged in) before screening.
-    // Does nothing if the user is already signed in.
-    AuthService().signInAsGuest().catchError((_) {});
-  }
 
   Future<void> _pick(ImageSource source) async {
     final XFile? picked = await _picker.pickImage(
@@ -53,7 +44,7 @@ class _PhotoScreenState extends State<PhotoScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Take Back Photo'),
-        leading: BackButton(onPressed: () => context.go('/')),
+        leading: BackButton(onPressed: () => context.go('/home')),
       ),
       body: SafeArea(
         child: Padding(

@@ -9,7 +9,6 @@ import 'package:go_router/go_router.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 
-import '../../services/auth_service.dart';
 import '../../services/pose_detector.dart';
 import '../../services/screening_draft.dart';
 import 'back_guide.dart';
@@ -59,8 +58,6 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // Make sure there is a session (guest or logged in) before screening.
-    AuthService().signInAsGuest().catchError((_) {});
     _listenTilt();
     _start(request: true);
   }
@@ -379,7 +376,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
     return Scaffold(
       appBar: AppBar(
         title: const Text('Take Back Photo'),
-        leading: BackButton(onPressed: () => context.go('/')),
+        leading: BackButton(onPressed: () => context.go('/home')),
       ),
       body: SafeArea(child: _captured != null ? _buildReview() : _buildBody()),
     );

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import '../../core/widgets.dart';
 import '../../services/api_client.dart';
@@ -44,11 +45,6 @@ class _LoginScreenState extends State<LoginScreen> {
       );
 
       if (!mounted) return;
-
-      if (_auth.isClinicLoggedIn) {
-        context.go('/clinic-account');
-        return;
-      }
 
       final role = await _auth.getRole();
 
@@ -170,11 +166,13 @@ class _LoginScreenState extends State<LoginScreen> {
                               )
                             : const Text('Login'),
                       ),
-                      const SizedBox(height: 12),
-                      TextButton(
-                        onPressed: () => context.go('/screening/photo'),
-                        child: const Text('New here? Start a screening'),
-                      ),
+                      if (!kIsWeb) ...[
+                        const SizedBox(height: 12),
+                        TextButton(
+                          onPressed: () => context.go('/signup'),
+                          child: const Text('New here? Create an account'),
+                        ),
+                      ],
                     ],
                   ),
                 ),

@@ -9,6 +9,8 @@ import '../../core/validators.dart';
 import '../../services/api_client.dart';
 import '../../services/auth_service.dart';
 import 'privacy_notice.dart';
+import '../../core/theme.dart';
+import '../../core/widgets.dart';
 
 /// Steps:  adults (18+)      details -> consent
 ///         ages 9 to 17      details -> guardian consent -> minor assent
@@ -304,88 +306,97 @@ class _SignUpScreenState extends State<SignUpScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _header(0, 'Create your account'),
-          TextFormField(
+          LabeledField(
+            label: 'Full Name',
+            hint: 'Juan Dela Cruz',
             controller: _nameCtrl,
             textCapitalization: TextCapitalization.words,
+            textInputAction: TextInputAction.next,
             autofillHints: const [AutofillHints.name],
             inputFormatters: [LengthLimitingTextInputFormatter(60)],
-            decoration: const InputDecoration(
-              labelText: 'Full name',
-              border: OutlineInputBorder(),
-            ),
             validator: (v) => Validators.name(v, label: 'full name'),
           ),
           const SizedBox(height: 16),
-          TextFormField(
-            controller: _emailCtrl,
-            keyboardType: TextInputType.emailAddress,
-            autofillHints: const [AutofillHints.email],
-            inputFormatters: [
-              FilteringTextInputFormatter.deny(RegExp(r'\s')),
-              LengthLimitingTextInputFormatter(254),
-            ],
-            decoration: const InputDecoration(
-              labelText: 'Email',
-              border: OutlineInputBorder(),
-            ),
-            validator: Validators.email,
-          ),
-          const SizedBox(height: 16),
-          TextFormField(
-            controller: _dobCtrl,
-            readOnly: true,
-            onTap: _pickDob,
-            decoration: InputDecoration(
-              labelText: 'Date of birth',
-              border: const OutlineInputBorder(),
-              suffixIcon: const Icon(Icons.calendar_today),
-              helperText: _dobHelper(),
-              helperMaxLines: 2,
-              errorText: _dob != null ? Validators.dateOfBirth(_dob) : null,
-            ),
-            validator: (_) => Validators.dateOfBirth(_dob),
-          ),
-          const SizedBox(height: 16),
-          TextFormField(
+          LabeledField(
+            label: 'Password',
+            hint: '••••••••••',
             controller: _passwordCtrl,
             obscureText: _hidePassword,
+            textInputAction: TextInputAction.next,
             autofillHints: const [AutofillHints.newPassword],
             onChanged: (_) => setState(() {}),
             inputFormatters: [LengthLimitingTextInputFormatter(64)],
-            decoration: InputDecoration(
-              labelText: 'Password',
-              border: const OutlineInputBorder(),
-              suffixIcon: IconButton(
-                icon: Icon(
-                  _hidePassword ? Icons.visibility : Icons.visibility_off,
-                ),
-                onPressed: () => setState(() => _hidePassword = !_hidePassword),
+            suffixIcon: IconButton(
+              icon: Icon(
+                _hidePassword ? Icons.visibility_off : Icons.visibility,
               ),
+              color: AppColors.hint,
+              onPressed: () => setState(() => _hidePassword = !_hidePassword),
             ),
             validator: Validators.password,
           ),
           PasswordRules(password: _passwordCtrl.text),
           const SizedBox(height: 16),
-          TextFormField(
-            controller: _confirmCtrl,
-            obscureText: _hidePassword,
-            decoration: const InputDecoration(
-              labelText: 'Confirm password',
-              border: OutlineInputBorder(),
-            ),
-            validator: (v) => Validators.confirmPassword(v, _passwordCtrl.text),
+          LabeledField(
+            label: 'Email',
+            hint: 'example@example.com',
+            controller: _emailCtrl,
+            keyboardType: TextInputType.emailAddress,
+            textInputAction: TextInputAction.next,
+            autofillHints: const [AutofillHints.email],
+            inputFormatters: [
+              FilteringTextInputFormatter.deny(RegExp(r'\s')),
+              LengthLimitingTextInputFormatter(254),
+            ],
+            validator: Validators.email,
+          ),
+          const SizedBox(height: 16),
+          LabeledField(
+            label: 'Date of Birth',
+            hint: 'DD / MM / YYYY',
+            controller: _dobCtrl,
+            readOnly: true,
+            onTap: _pickDob,
+            suffixIcon: const Icon(Icons.calendar_today, color: AppColors.hint),
+            helperText: _dobHelper(),
+            errorText: _dob != null ? Validators.dateOfBirth(_dob) : null,
+            validator: (_) => Validators.dateOfBirth(_dob),
           ),
           _errorBox(),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
+          Wrap(
+            alignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                'In the next step you will review our ',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              TextButton(
+                onPressed: () => context.push('/privacy'),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  minimumSize: const Size(0, 32),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: const Text('Privacy Notice'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
           FilledButton(
             onPressed: _continueFromDetails,
-            child: const Text('Continue'),
+            child: const Text('CONTINUE'),
           ),
+          const SizedBox(height: 20),
+          const OrDivider(),
           const SizedBox(height: 12),
-          TextButton(
-            onPressed: () => context.go('/login'),
-            child: const Text('Already have an account? Log in'),
+          const SocialSignInRow(),
+          const SizedBox(height: 20),
+          LinkRow(
+            text: 'Already have an account?',
+            linkText: 'Log In',
+            onTap: () => context.go('/login'),
           ),
         ],
       ),

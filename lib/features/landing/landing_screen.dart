@@ -27,10 +27,8 @@ class LandingScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 12),
                   FilledButton(
-                    // For now this opens the camera. It will open the
-                    // Screening Hub in UI phase 3.
-                    onPressed: () => context.go('/screening/photo'),
-                    child: const Text('GET STARTED AS GUEST'),
+                    onPressed: () => context.go('/signup'),
+                    child: const Text('SIGN UP'),
                   ),
                   const SizedBox(height: 12),
                   FilledButton.tonal(
